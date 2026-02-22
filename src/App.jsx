@@ -3,10 +3,11 @@ import { useState } from "react";
 import "./App.css";
 import { readFile } from "@tauri-apps/plugin-fs";
 import { open } from "@tauri-apps/plugin-dialog";
+import PDFViewer from "./Pdfviewer";
 function App() {
   const [pdfData, setPdfData] = useState(null);
   const [fileName, setFileName] = useState("");
-  const handleOpenPdf = async () => {
+  const handleOpenPDF = async () => {
     try {
       const selected = await open({
         filters: [{ name: "PDF", extensions: ["pdf"] }],
@@ -23,33 +24,74 @@ function App() {
       console.error("there is error while uploading pdf!", error);
     }
   };
+  const handleClosePDF = () => {
+    setPdfData(null);
+    setFileName("");
+  };
   return (
     <div className="app-container">
       {/* Toolbar */}
       <div className="toolbar">
-        <button onClick={handleOpenPdf} className="btn-primary">
-          📂 PDF Aç
-        </button>
-        {fileName && <span className="file-name">{fileName}</span>}
+        <div className="toolbar-left">
+          <button onClick={handleOpenPDF} className="btn-primary">
+            📂 Open PDF
+          </button>
+
+          {fileName && (
+            <>
+              <span className="file-name">{fileName}</span>
+              <button onClick={handleClosePDF} className="btn-secondary">
+                ✕ Close
+              </button>
+            </>
+          )}
+        </div>
+
+        <div className="toolbar-right">
+          {pdfData && (
+            <div className="toolbar-actions">
+              <button className="btn-tool" title="Highlight">
+                🖍️
+              </button>
+              <button className="btn-tool" title="Pen">
+                ✏️
+              </button>
+              <button className="btn-tool" title="Text">
+                📝
+              </button>
+              <button className="btn-tool" title="Eraser">
+                🗑️
+              </button>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* PDF Göstərmə Sahəsi */}
       <div className="content">
         {pdfData ? (
-          <div className="pdf-viewer">
-            <p>✅ PDF yükləndi! ({pdfData.length} bytes)</p>
-            <p>📄 Fayl: {fileName}</p>
-            <p>Növbəti addımda PDF render edəcəyik...</p>
-          </div>
+          <PDFViewer pdfData={pdfData} fileName={fileName} />
         ) : (
           <div className="welcome">
-            <h1>📝 PDF Annotator</h1>
-            <p>PDF faylı açmaq üçün yuxarıdakı düyməyə klikləyin</p>
+            <h1>📝 PDF Annotition</h1>
+            <p>Click the button above to open the PDF file.</p>
             <div className="features">
-              <div className="feature">✏️ Qeyd et</div>
-              <div className="feature">🖍️ Highlight</div>
-              <div className="feature">📝 Textbox</div>
-              <div className="feature">🗑️ Sil</div>
+              <div className="feature">
+                <span className="feature-icon">🖍️</span>
+                <span className="feature-text">Highlight</span>
+              </div>
+              <div className="feature">
+                <span className="feature-icon">✏️</span>
+                <span className="feature-text">Record</span>
+              </div>
+              <div className="feature">
+                <span className="feature-icon">📝</span>
+                <span className="feature-text">Textbox</span>
+              </div>
+              <div className="feature">
+                <span className="feature-icon">🗑️</span>
+                <span className="feature-text">Delete</span>
+              </div>
             </div>
           </div>
         )}
