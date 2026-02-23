@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import * as pdfjsLib from "pdfjs-dist";
-import "./PdfViewer.css"
-
+import "./PdfViewer.css";
+import AnnotationLayer from "./Annotationlayer";
 pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
 const Pdfviewer = ({ pdfData, fileName }) => {
   const canvasRef = useRef(null);
@@ -10,6 +10,9 @@ const Pdfviewer = ({ pdfData, fileName }) => {
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(0);
   const [pdf, setPdf] = useState(null);
+
+  const [canvasSize, setCanvasSize] = useState({ width: 0, length: 0 });
+  const [annotations, setAnnotations] = useState({});
 
   useEffect(() => {
     if (!pdfData) return;
@@ -47,6 +50,7 @@ const Pdfviewer = ({ pdfData, fileName }) => {
         canvas.height = viewport.height;
         canvas.width = viewport.width;
 
+        setCanvasSize({ width: viewport.width, height: viewport.height });
         const renderContext = {
           canvasContext: context,
           viewport: viewport,
@@ -61,6 +65,13 @@ const Pdfviewer = ({ pdfData, fileName }) => {
 
     renderPage();
   }, [pdf, currentPage, scale]);
+  const handleAnnotationsChange = (annotationData) => {
+    setAnnotations((prev) => ({
+      ...prev,
+      [currentPage]: annotationData, // Cari səhifənin annotationları
+    }));
+    console.log(`Page ${currentPage} annotations refreshed`);
+  };
   // Növbəti səhifə
   const nextPage = () => {
     if (currentPage < totalPages) {
@@ -95,7 +106,7 @@ const Pdfviewer = ({ pdfData, fileName }) => {
 
   return (
     <div className="pdf-viewer-container">
-      
+      {/* Səhifə naviqasiyası */}
       <div className="pdf-controls">
         <div className="page-controls">
           <button
@@ -103,11 +114,11 @@ const Pdfviewer = ({ pdfData, fileName }) => {
             disabled={currentPage === 1}
             className="control-btn"
           >
-            ←Previous
+            ← Əvvəlki
           </button>
 
           <span className="page-info">
-            Page {currentPage} / {totalPages}
+            Səhifə {currentPage} / {totalPages}
           </span>
 
           <button
@@ -115,7 +126,7 @@ const Pdfviewer = ({ pdfData, fileName }) => {
             disabled={currentPage === totalPages}
             className="control-btn"
           >
-            Next→
+            Növbəti →
           </button>
         </div>
 
@@ -130,9 +141,34 @@ const Pdfviewer = ({ pdfData, fileName }) => {
         </div>
       </div>
 
-      {/* PDF Canvas */}
-      <div className="pdf-canvas-wrapper">
-        <canvas ref={canvasRef} className="pdf-canvas"></canvas>
+      {/* PDF və Annotation Canvas-lar */}
+      <div className="pdf-canvas-wrapper" ref={containerRef}>
+        {/* 
+          LAYER 1: PDF CANVAS (Arxada)
+          Burda PDF render olunur
+        */}
+        <canvas ref={canvasRef} className="pdf-canvas" />
+
+        {/* 
+          LAYER 2: ANNOTATION CANVAS (Öndə)
+          Burda annotationlar çəkilir
+          position: absolute ilə PDF-in üstündə
+        */}
+        {canvasSize.width > 0 && (
+          <div
+            className="annotation-overlay"
+            style={{
+              width: canvasSize.width,
+              height: canvasSize.height,
+            }}
+          >
+            <AnnotationLayer
+              width={canvasSize.width}
+              height={canvasSize.height}
+              onAnnotationsChange={handleAnnotationsChange}
+            />
+          </div>
+        )}
       </div>
     </div>
   );
