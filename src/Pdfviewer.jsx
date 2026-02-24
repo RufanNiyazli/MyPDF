@@ -2,16 +2,18 @@ import React, { useEffect, useRef, useState } from "react";
 import * as pdfjsLib from "pdfjs-dist";
 import "./PdfViewer.css";
 import AnnotationLayer from "./Annotationlayer";
+
 pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
+
 const Pdfviewer = ({ pdfData, fileName }) => {
   const canvasRef = useRef(null);
+  const containerRef = useRef(null);
   const [loading, setLoading] = useState(false);
   const [scale, setScale] = useState(1.5);
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(0);
   const [pdf, setPdf] = useState(null);
-
-  const [canvasSize, setCanvasSize] = useState({ width: 0, length: 0 });
+  const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 }); // ✅ height not length
   const [annotations, setAnnotations] = useState({});
 
   useEffect(() => {
@@ -25,14 +27,15 @@ const Pdfviewer = ({ pdfData, fileName }) => {
         setPdf(pdfDoc);
         setTotalPages(pdfDoc.numPages);
         setCurrentPage(1);
-        console.log("PDF downloaded:", pdfDoc.numPages, "page");
+        console.log("PDF loaded:", pdfDoc.numPages, "pages");
       } catch (error) {
-        console.error("PDF download error:", error);
-        alert("PDF download error!");
+        console.error("PDF load error:", error);
+        alert("PDF load error!");
       } finally {
         setLoading(false);
       }
     };
+
     loadPdf();
   }, [pdfData]);
 
@@ -51,50 +54,46 @@ const Pdfviewer = ({ pdfData, fileName }) => {
         canvas.width = viewport.width;
 
         setCanvasSize({ width: viewport.width, height: viewport.height });
+
         const renderContext = {
           canvasContext: context,
           viewport: viewport,
         };
 
         await page.render(renderContext).promise;
-        console.log("Page rendered", currentPage);
+        console.log("Page rendered:", currentPage);
       } catch (error) {
-        console.error("Render error", error);
+        console.error("Render error:", error);
       }
     };
 
     renderPage();
   }, [pdf, currentPage, scale]);
+
   const handleAnnotationsChange = (annotationData) => {
     setAnnotations((prev) => ({
       ...prev,
-      [currentPage]: annotationData, // Cari səhifənin annotationları
+      [currentPage]: annotationData,
     }));
-    console.log(`Page ${currentPage} annotations refreshed`);
+    console.log(`Page ${currentPage} annotations updated`);
   };
-  // Növbəti səhifə
+
   const nextPage = () => {
-    if (currentPage < totalPages) {
-      setCurrentPage(currentPage + 1);
-    }
+    if (currentPage < totalPages) setCurrentPage(currentPage + 1);
   };
 
-  // Əvvəlki səhifə
   const prevPage = () => {
-    if (currentPage > 1) {
-      setCurrentPage(currentPage - 1);
-    }
+    if (currentPage > 1) setCurrentPage(currentPage - 1);
   };
 
-  // Zoom in
   const zoomIn = () => {
-    setScale((prevScale) => Math.min(prevScale + 0.25, 3));
+    setScale((prev) => Math.min(prev + 0.25, 3));
   };
 
-  // Zoom out
   const zoomOut = () => {
-    setScale((prevScale) => Math.max(prevScale - 0.25, 0.5));
+    setScale((prev) => Math.max(prev - 0.25, 0.5));
   };
+
   if (loading) {
     return (
       <div className="pdf-loading">
@@ -106,7 +105,6 @@ const Pdfviewer = ({ pdfData, fileName }) => {
 
   return (
     <div className="pdf-viewer-container">
-      {/* Səhifə naviqasiyası */}
       <div className="pdf-controls">
         <div className="page-controls">
           <button
@@ -141,19 +139,11 @@ const Pdfviewer = ({ pdfData, fileName }) => {
         </div>
       </div>
 
-      {/* PDF və Annotation Canvas-lar */}
       <div className="pdf-canvas-wrapper" ref={containerRef}>
-        {/* 
-          LAYER 1: PDF CANVAS (Arxada)
-          Burda PDF render olunur
-        */}
+        {/* LAYER 1: PDF Canvas */}
         <canvas ref={canvasRef} className="pdf-canvas" />
 
-        {/* 
-          LAYER 2: ANNOTATION CANVAS (Öndə)
-          Burda annotationlar çəkilir
-          position: absolute ilə PDF-in üstündə
-        */}
+        {/* LAYER 2: Annotation Canvas */}
         {canvasSize.width > 0 && (
           <div
             className="annotation-overlay"
