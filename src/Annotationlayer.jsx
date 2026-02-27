@@ -77,6 +77,9 @@ const Annotationlayer = ({ width, height, onAnnotationsChange }) => {
       canvas.selection = true;
       canvas.isDrawingMode = false;
     }
+    else if(activeTool==="rectangle"){
+      
+    }
   }, [activeTool, selectedColor, brushWidth, onAnnotationsChange]);
 
   const addTextBox = () => {
