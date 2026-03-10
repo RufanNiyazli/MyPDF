@@ -1,67 +1,35 @@
-import React, { useCallback, useState } from "react";
+import { useCallback, useRef } from "react";
 
-const useHistory = (canvas) => {
+const useHistory = () => {
   const undoStack = useRef([]);
   const redoStack = useRef([]);
 
-  const [canRedo, setCanRedo] = useState(false);
-  const [canUndo, setCanUndo] = useState(false);
-  const saveState = useCallback(() => {
+  const saveState = useCallback((canvas) => {
     if (!canvas) return;
+    undoStack.current.push(JSON.stringify(canvas.toJSON()));
+    redoStack.current = [];
+  }, []);
 
+  const undo = useCallback((canvas) => {
+    if (!canvas || undoStack.current.length === 0) return;
     const currentState = JSON.stringify(canvas.toJSON());
-
-    undoStack.current.push(currentState);
-    redoStack = [];
-
-    setCanUndo(true);
-    setCanRedo(false);
-
-    console.log("State saved", currentState);
-  }, [canvas]);
-
-  const undo = useCallback(() => {
-    if (!canvas || undoStack.current.length == 0) return;
-
-    const currentState = JSON.stringify(canvas.toJSON);
     const previousState = undoStack.current.pop();
-
     redoStack.current.push(currentState);
+    canvas.loadFromJSON(previousState, () => canvas.renderAll());
+  }, []);
 
-    canvas.loadFromJSON(previousState, () => {
-      canvas.renderAll();
-    });
+  const redo = useCallback((canvas) => {
+    if (!canvas || redoStack.current.length === 0) return;
+    const currentState = JSON.stringify(canvas.toJSON());
+    const nextState = redoStack.current.pop();
+    undoStack.current.push(currentState);
+    canvas.loadFromJSON(nextState, () => canvas.renderAll());
+  }, []);
 
-    setCanRedo(true);
-    setCanUndo(undoStack.current.length > 0);
-  }, [canvas]);
+  const canUndo = () => undoStack.current.length > 0;
+  const canRedo = () => redoStack.current.length > 0;
 
-  const redo = useCallback(() => {
-    if (!canvas || redoStack.current.length == 0) return;
-    
-    const currentState =JSON.stringify(canvas.toJSON)
-    const nextState = redoStack.current.pop()
-
-    undoStack.current.push(currentState)
-    canvas.loadFromJSON(nextState,()=>{
-        canvas.renderAll()
-    })
-
-    setCanRedo(redoStack.current.length>0)
-    setCanUndo(true)
-  });
-
-const clearHistory =useCallback(()=>{
-    setCanRedo(false)
-    setCanUndo(false)
-    undoStack=[]
-    redoStack=[]
-})
-
-
-  return{
-    saveState,undo,redo,canRedo,canUndo,clearHistory
-  }
+  return { saveState, undo, redo, canUndo, canRedo };
 };
 
 export default useHistory;

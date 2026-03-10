@@ -1,71 +1,87 @@
-import { event } from "@tauri-apps/api";
-import { fabric } from "fabric";
+import * as fabric from "fabric";
+
+function createArrowPath(x1, y1, x2, y2, color, strokeWidth) {
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const len = Math.sqrt(dx * dx + dy * dy);
+  if (len < 2) return null;
+
+  const angle = Math.atan2(dy, dx);
+  const headLen = Math.max(strokeWidth * 5, 18);
+
+  const aX1 = x2 - headLen * Math.cos(angle - Math.PI / 6);
+  const aY1 = y2 - headLen * Math.sin(angle - Math.PI / 6);
+  const aX2 = x2 - headLen * Math.cos(angle + Math.PI / 6);
+  const aY2 = y2 - headLen * Math.sin(angle + Math.PI / 6);
+
+  const d = `M ${x1} ${y1} L ${x2} ${y2} M ${aX1} ${aY1} L ${x2} ${y2} L ${aX2} ${aY2}`;
+
+  return new fabric.Path(d, {
+    stroke: color,
+    strokeWidth: strokeWidth,
+    fill: "transparent",
+    strokeLineCap: "round",
+    strokeLineJoin: "round",
+    selectable: true,
+    evented: true,
+    objectCaching: false,
+  });
+}
+
 export function addArrowDrawing(canvas, color, strokeWidth) {
   let isDrawing = false;
-  let line = null;
-  let arrowHead = null;
-  let startX, startY;
+  let startX = 0;
+  let startY = 0;
+  let currentArrow = null;
+
+  canvas.selection = false;
+  canvas.isDrawingMode = false;
+
   const handleMouseDown = (event) => {
-    const pointer = canvas.getPointer(e.target);
+    isDrawing = true;
+    const pointer = canvas.getScenePoint(event.e);
     startX = pointer.x;
     startY = pointer.y;
-
-    line = new fabric.Line([startX, startY, startX, startY], {
-      strokeWidth: strokeWidth,
-      selectable: false,
-      stroke: color,
-    });
-    arrowHead = new fabric.Triangle({
-      left: startX,
-      top: startY,
-      selectable: false,
-      height: strokeWidth * 4,
-      width: strokeWidth * 3,
-      originX: "center",
-      originY: "center",
-      fill: color,
-    });
-    canvas.add(line);
-    canvas.add(arrowHead);
   };
+
   const handleMouseMove = (event) => {
-    const pointer = canvas.getPointer(e.target);
-    if (!isDrawing || !line || !arrowHead) return;
-    line.set({
-      x2: pointer.x,
-      y2: pointer.y,
-    });
-    const dx = pointer.x - startX;
-    const dy = pointer.y - startY;
-    const angle = Math.atan2(dy, dx) * (180 / Math.PI);
-
-    arrowHead.set({
-      left: pointer.x,
-      top: pointer.y,
-      angle: angle + 90,
-    });
-
-    canvas.renderAll();
-  };
-
-  const handleMouseUp = () => {
     if (!isDrawing) return;
+    const pointer = canvas.getScenePoint(event.e);
 
-    isDrawing = false;
-
-    if (line && arrowHead) {
-      const group = new fabric.Group([line, arrowHead], {
-        selectable: true,
-      });
-
-      canvas.remove(line);
-      canvas.remove(arrowHead);
-      canvas.add(group);
-      canvas.setActiveObject(group);
+    if (currentArrow) {
+      canvas.remove(currentArrow);
+      currentArrow = null;
     }
 
-    line = null;
-    arrowHead = null;
+    const arrow = createArrowPath(startX, startY, pointer.x, pointer.y, color, strokeWidth);
+    if (arrow) {
+      arrow.selectable = false;
+      arrow.evented = false;
+      canvas.add(arrow);
+      currentArrow = arrow;
+      canvas.renderAll();
+    }
+  };
+
+  const handleMouseUp = (event) => {
+    if (!isDrawing) return;
+    isDrawing = false;
+
+    const pointer = canvas.getScenePoint(event.e);
+
+    if (currentArrow) {
+      canvas.remove(currentArrow);
+      currentArrow = null;
+    }
+
+    const finalArrow = createArrowPath(startX, startY, pointer.x, pointer.y, color, strokeWidth);
+    if (finalArrow) {
+      finalArrow.selectable = true;
+      finalArrow.evented = true;
+      canvas.add(finalArrow);
+      canvas.setActiveObject(finalArrow);
+      canvas.renderAll();
+    }
   };
 
   canvas.on("mouse:down", handleMouseDown);
@@ -76,5 +92,10 @@ export function addArrowDrawing(canvas, color, strokeWidth) {
     canvas.off("mouse:down", handleMouseDown);
     canvas.off("mouse:move", handleMouseMove);
     canvas.off("mouse:up", handleMouseUp);
+    canvas.selection = true;
+    if (currentArrow) {
+      canvas.remove(currentArrow);
+      currentArrow = null;
+    }
   };
 }

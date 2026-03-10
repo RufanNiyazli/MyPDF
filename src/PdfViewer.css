@@ -109,13 +109,7 @@
   height: auto;
 }
 
-/*
- * ANNOTATION OVERLAY
- * 
- * PDF canvas-ın üstündə yerləşir
- * position: absolute - PDF ilə eyni yerdə
- * pointer-events: none - PDF-ə toxunmağa icazə verir
- */
+
 .annotation-overlay {
   position: absolute;
   top: 30px; /* padding ilə eyni */
