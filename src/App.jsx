@@ -8,6 +8,7 @@ import { savePdfWithAnnotations, downloadPdf } from "./pdfSaver";
 function App() {
   const [pdfData, setPdfData] = useState(null);
   const [fileName, setFileName] = useState("");
+  const [filePath, setFilePath] = useState("");
   const [scale, setScale] = useState(1.5);
   const canvasMapRef = useRef({});
 
@@ -22,8 +23,22 @@ function App() {
       });
       if (selected && typeof selected === "string") {
         const contents = await readFile(selected, { dir: null });
-        setPdfData(contents);
+        let safeContents = contents;
+        if (contents instanceof Uint8Array) {
+          safeContents = contents;
+        } else if (contents instanceof ArrayBuffer) {
+          safeContents = new Uint8Array(contents);
+        } else if (ArrayBuffer.isView(contents)) {
+          safeContents = new Uint8Array(contents.buffer, contents.byteOffset, contents.byteLength);
+        } else if (Array.isArray(contents)) {
+          safeContents = new Uint8Array(contents);
+        } else if (typeof contents === "object" && contents !== null) {
+          safeContents = new Uint8Array(Object.values(contents));
+        }
+        
+        setPdfData(safeContents);
         setFileName(selected.split("/").pop() || "Unnamed");
+        setFilePath(selected);
         canvasMapRef.current = {};
       }
     } catch (error) {
@@ -34,6 +49,7 @@ function App() {
   const handleClosePDF = () => {
     setPdfData(null);
     setFileName("");
+    setFilePath("");
     canvasMapRef.current = {};
   };
 
@@ -44,7 +60,7 @@ function App() {
         pdfData,
         canvasMapRef.current
       );
-      await downloadPdf(newPdfBytes, fileName);
+      await downloadPdf(newPdfBytes, filePath);
     } catch (error) {
       console.error("Save error:", error);
       alert("Save failed: " + error.message);

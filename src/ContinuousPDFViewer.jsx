@@ -4,7 +4,6 @@ import * as fabric from "fabric";
 import AnnotationCanvas from "./AnnotationCanvas";
 import AnnotationToolbar from "./AnnotationToolbar";
 import { addShapeDrawing } from "./shapeTools";
-import { addArrowDrawing } from "./arrowTools";
 import "./ContinuousPDFViewer.css";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.js";
@@ -23,8 +22,10 @@ function ContinuousPDFViewer({ pdfData, scale = 1.5, onCanvasMapReady }) {
 
   const canvasesRef = useRef({});
   const cleanupFnsRef = useRef({});
-  const undoStacksRef = useRef({});
-  const redoStacksRef = useRef({});
+  
+  const latestStatesRef = useRef({});
+  const globalUndoStackRef = useRef([]);
+  const globalRedoStackRef = useRef([]);
 
   useEffect(() => {
     if (!pdfData) return;
@@ -33,7 +34,10 @@ function ContinuousPDFViewer({ pdfData, scale = 1.5, onCanvasMapReady }) {
     const loadPDF = async () => {
       try {
         setIsLoading(true);
-        const loadingTask = pdfjsLib.getDocument({ data: pdfData });
+        // By wrapping pdfData in a new Uint8Array, we prevent pdf.js from 
+        // completely detaching the main ArrayBuffer when it transfers it 
+        // to its Web Worker. This guarantees pdfSaver still has the bytes.
+        const loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(pdfData) });
         const pdfDoc = await loadingTask.promise;
         if (!isMounted) return;
         setPdf(pdfDoc);
@@ -55,10 +59,14 @@ function ContinuousPDFViewer({ pdfData, scale = 1.5, onCanvasMapReady }) {
 
   const saveCanvasState = useCallback((canvas, pageNumber) => {
     if (!canvas) return;
-    const state = JSON.stringify(canvas.toJSON());
-    if (!undoStacksRef.current[pageNumber]) undoStacksRef.current[pageNumber] = [];
-    undoStacksRef.current[pageNumber].push(state);
-    redoStacksRef.current[pageNumber] = [];
+    const currentState = JSON.stringify(canvas.toJSON());
+    const previousState = latestStatesRef.current[pageNumber] || JSON.stringify(new fabric.Canvas().toJSON());
+    
+    if (currentState !== previousState) {
+        globalUndoStackRef.current.push({ pageNumber, state: previousState });
+        globalRedoStackRef.current = [];
+        latestStatesRef.current[pageNumber] = currentState;
+    }
   }, []);
 
   const setupCanvasTool = useCallback(
@@ -74,11 +82,16 @@ function ContinuousPDFViewer({ pdfData, scale = 1.5, onCanvasMapReady }) {
       canvas.selection = true;
       canvas.off("mouse:down");
 
-      if (activeTool === "pen") {
+      if (activeTool === "pen" || activeTool === "highlighter") {
         canvas.isDrawingMode = true;
         const brush = new fabric.PencilBrush(canvas);
-        brush.color = toolSettings.color;
-        brush.width = toolSettings.brushWidth;
+        if (activeTool === "highlighter") {
+            brush.color = toolSettings.color + "4D";
+            brush.width = 20;
+        } else {
+            brush.color = toolSettings.color;
+            brush.width = toolSettings.brushWidth;
+        }
         canvas.freeDrawingBrush = brush;
 
         const handlePathCreated = () => saveCanvasState(canvas, pageNumber);
@@ -86,34 +99,10 @@ function ContinuousPDFViewer({ pdfData, scale = 1.5, onCanvasMapReady }) {
         cleanupFnsRef.current[pageNumber] = () => {
           canvas.off("path:created", handlePathCreated);
         };
-      } else if (activeTool === "highlighter") {
-        canvas.isDrawingMode = true;
-        const brush = new fabric.PencilBrush(canvas);
-        brush.color = toolSettings.color + "4D";
-        brush.width = 20;
-        canvas.freeDrawingBrush = brush;
-
-        const handlePathCreated = () => saveCanvasState(canvas, pageNumber);
-        canvas.on("path:created", handlePathCreated);
-        cleanupFnsRef.current[pageNumber] = () => {
-          canvas.off("path:created", handlePathCreated);
-        };
-      } else if (activeTool === "rectangle" || activeTool === "circle") {
+      } else if (["rectangle", "circle", "arrow"].includes(activeTool)) {
         const cleanup = addShapeDrawing(
           canvas,
           activeTool,
-          toolSettings.color,
-          toolSettings.brushWidth
-        );
-        const handleMouseUp = () => saveCanvasState(canvas, pageNumber);
-        canvas.on("mouse:up", handleMouseUp);
-        cleanupFnsRef.current[pageNumber] = () => {
-          cleanup();
-          canvas.off("mouse:up", handleMouseUp);
-        };
-      } else if (activeTool === "arrow") {
-        const cleanup = addArrowDrawing(
-          canvas,
           toolSettings.color,
           toolSettings.brushWidth
         );
@@ -142,18 +131,25 @@ function ContinuousPDFViewer({ pdfData, scale = 1.5, onCanvasMapReady }) {
           canvas.renderAll();
           saveCanvasState(canvas, pageNumber);
         };
+        const handleChange = () => saveCanvasState(canvas, pageNumber);
+        
         canvas.on("mouse:down", handleTextClick);
+        canvas.on("text:changed", handleChange);
+        canvas.on("object:modified", handleChange);
+        
         cleanupFnsRef.current[pageNumber] = () => {
           canvas.off("mouse:down", handleTextClick);
+          canvas.off("text:changed", handleChange);
+          canvas.off("object:modified", handleChange);
           canvas.selection = true;
         };
       } else if (activeTool === "eraser") {
         canvas.selection = false;
         const handleErase = (e) => {
           if (e.target) {
-            saveCanvasState(canvas, pageNumber);
             canvas.remove(e.target);
             canvas.renderAll();
+            saveCanvasState(canvas, pageNumber);
           }
         };
         canvas.on("mouse:down", handleErase);
@@ -170,8 +166,11 @@ function ContinuousPDFViewer({ pdfData, scale = 1.5, onCanvasMapReady }) {
     (canvas, pageNumber) => {
       if (!canvas) return;
       canvasesRef.current[pageNumber] = canvas;
-      undoStacksRef.current[pageNumber] = [];
-      redoStacksRef.current[pageNumber] = [];
+      
+      if (!latestStatesRef.current[pageNumber]) {
+          latestStatesRef.current[pageNumber] = JSON.stringify(canvas.toJSON());
+      }
+      
       if (onCanvasMapReady) onCanvasMapReady(canvasesRef.current);
       setupCanvasTool(canvas, pageNumber);
     },
@@ -196,47 +195,59 @@ function ContinuousPDFViewer({ pdfData, scale = 1.5, onCanvasMapReady }) {
   }, [activeTool, toolSettings, setupCanvasTool]);
 
   const handleUndo = useCallback(() => {
-    Object.entries(canvasesRef.current).forEach(([pageNum, canvas]) => {
-      const pn = parseInt(pageNum);
-      const stack = undoStacksRef.current[pn] || [];
-      if (stack.length === 0) return;
+    if (globalUndoStackRef.current.length === 0) return;
+    
+    const entry = globalUndoStackRef.current.pop();
+    const { pageNumber, state: previousState } = entry;
+    
+    const canvas = canvasesRef.current[pageNumber];
+    if (!canvas) return;
 
-      const currentState = JSON.stringify(canvas.toJSON());
-      if (!redoStacksRef.current[pn]) redoStacksRef.current[pn] = [];
-      redoStacksRef.current[pn].push(currentState);
-
-      const previousState = stack.pop();
-      canvas.loadFromJSON(JSON.parse(previousState)).then(() => {
+    const currentState = latestStatesRef.current[pageNumber];
+    globalRedoStackRef.current.push({ pageNumber, state: currentState });
+    latestStatesRef.current[pageNumber] = previousState;
+    
+    canvas.loadFromJSON(JSON.parse(previousState)).then(() => {
         canvas.requestRenderAll();
-      });
+        setupCanvasTool(canvas, pageNumber);
     });
-  }, []);
+  }, [setupCanvasTool]);
 
   const handleRedo = useCallback(() => {
-    Object.entries(canvasesRef.current).forEach(([pageNum, canvas]) => {
-      const pn = parseInt(pageNum);
-      const stack = redoStacksRef.current[pn] || [];
-      if (stack.length === 0) return;
+    if (globalRedoStackRef.current.length === 0) return;
+    
+    const entry = globalRedoStackRef.current.pop();
+    const { pageNumber, state: nextState } = entry;
+    
+    const canvas = canvasesRef.current[pageNumber];
+    if (!canvas) return;
 
-      const currentState = JSON.stringify(canvas.toJSON());
-      if (!undoStacksRef.current[pn]) undoStacksRef.current[pn] = [];
-      undoStacksRef.current[pn].push(currentState);
+    const currentState = latestStatesRef.current[pageNumber];
+    globalUndoStackRef.current.push({ pageNumber, state: currentState });
+    latestStatesRef.current[pageNumber] = nextState;
 
-      const nextState = stack.pop();
-      canvas.loadFromJSON(JSON.parse(nextState)).then(() => {
+    canvas.loadFromJSON(JSON.parse(nextState)).then(() => {
         canvas.requestRenderAll();
-      });
+        setupCanvasTool(canvas, pageNumber);
     });
-  }, []);
+  }, [setupCanvasTool]);
 
   const handleClear = useCallback(() => {
-    Object.values(canvasesRef.current).forEach((canvas) => {
+    Object.entries(canvasesRef.current).forEach(([pageNum, canvas]) => {
+      const pn = parseInt(pageNum);
+      const currentState = JSON.stringify(canvas.toJSON());
+      
       canvas.clear();
       canvas.backgroundColor = "transparent";
       canvas.renderAll();
+      
+      const clearedState = JSON.stringify(canvas.toJSON());
+      if (currentState !== clearedState) {
+          globalUndoStackRef.current.push({ pageNumber: pn, state: currentState });
+          latestStatesRef.current[pn] = clearedState;
+      }
     });
-    undoStacksRef.current = {};
-    redoStacksRef.current = {};
+    globalRedoStackRef.current = [];
   }, []);
 
   if (isLoading) {

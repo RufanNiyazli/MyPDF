@@ -30,12 +30,7 @@ function AnnotationCanvas({
 
       if (onCanvasReady) onCanvasReady(canvas, pageNumber);
 
-      canvas.on("object:added", () => {
-        if (onCanvasReady) onCanvasReady(canvas, pageNumber);
-      });
-      canvas.on("object:modified", () => {
-        if (onCanvasReady) onCanvasReady(canvas, pageNumber);
-      });
+      if (onCanvasReady) onCanvasReady(canvas, pageNumber);
     } catch (error) {
       console.error(`Canvas init error (page ${pageNumber}):`, error);
     }
