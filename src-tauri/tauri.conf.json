@@ -1,5 +1,5 @@
 {
-  "$schema": "https://schema.tauri.app/config/2",
+ "$schema": "./tauri.schema.json",
   "productName": "mypdf",
   "version": "0.1.0",
   "identifier": "com.rufan.mypdf",

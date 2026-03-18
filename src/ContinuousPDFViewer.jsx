@@ -8,7 +8,7 @@ import "./ContinuousPDFViewer.css";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.js";
 
-function ContinuousPDFViewer({ pdfData, scale = 1.5, onCanvasMapReady }) {
+function ContinuousPDFViewer({ pdfData, scale = 1.5, onCanvasMapReady, savedAnnotations, onAnnotationChange }) {
   const containerRef = useRef(null);
   const [pdf, setPdf] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -61,13 +61,15 @@ function ContinuousPDFViewer({ pdfData, scale = 1.5, onCanvasMapReady }) {
     if (!canvas) return;
     const currentState = JSON.stringify(canvas.toJSON());
     const previousState = latestStatesRef.current[pageNumber] || JSON.stringify(new fabric.Canvas().toJSON());
-    
+
     if (currentState !== previousState) {
-        globalUndoStackRef.current.push({ pageNumber, state: previousState });
-        globalRedoStackRef.current = [];
-        latestStatesRef.current[pageNumber] = currentState;
+      globalUndoStackRef.current.push({ pageNumber, state: previousState });
+      globalRedoStackRef.current = [];
+      latestStatesRef.current[pageNumber] = currentState;
+      // Notify parent that there are unsaved changes
+      if (onAnnotationChange) onAnnotationChange();
     }
-  }, []);
+  }, [onAnnotationChange]);
 
   const setupCanvasTool = useCallback(
     (canvas, pageNumber) => {
@@ -166,15 +168,32 @@ function ContinuousPDFViewer({ pdfData, scale = 1.5, onCanvasMapReady }) {
     (canvas, pageNumber) => {
       if (!canvas) return;
       canvasesRef.current[pageNumber] = canvas;
-      
-      if (!latestStatesRef.current[pageNumber]) {
-          latestStatesRef.current[pageNumber] = JSON.stringify(canvas.toJSON());
-      }
-      
+
       if (onCanvasMapReady) onCanvasMapReady(canvasesRef.current);
-      setupCanvasTool(canvas, pageNumber);
+
+      const savedJson = savedAnnotations && savedAnnotations[pageNumber];
+      if (savedJson) {
+        // Restore persisted annotations, then set up the active tool
+        try {
+          canvas.loadFromJSON(JSON.parse(savedJson)).then(() => {
+            canvas.requestRenderAll();
+            // Record this as the baseline state so undo/redo works correctly
+            latestStatesRef.current[pageNumber] = savedJson;
+            setupCanvasTool(canvas, pageNumber);
+          });
+        } catch (e) {
+          console.warn(`Failed to restore annotations for page ${pageNumber}:`, e);
+          latestStatesRef.current[pageNumber] = JSON.stringify(canvas.toJSON());
+          setupCanvasTool(canvas, pageNumber);
+        }
+      } else {
+        if (!latestStatesRef.current[pageNumber]) {
+          latestStatesRef.current[pageNumber] = JSON.stringify(canvas.toJSON());
+        }
+        setupCanvasTool(canvas, pageNumber);
+      }
     },
-    [setupCanvasTool, onCanvasMapReady]
+    [setupCanvasTool, onCanvasMapReady, savedAnnotations]
   );
 
   const handleToolChange = useCallback(
