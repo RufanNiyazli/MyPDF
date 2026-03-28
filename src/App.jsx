@@ -3,27 +3,20 @@ import "./App.css";
 import { readFile } from "@tauri-apps/plugin-fs";
 import { open } from "@tauri-apps/plugin-dialog";
 import ContinuousPDFViewer from "./ContinuousPDFViewer";
-import { savePdfWithAnnotations, downloadPdf } from "./pdfSaver";
 import {
-  saveAnnotations,
-  loadAnnotations,
-  savePristineBytes,
-  loadPristineBytes,
-} from "./annotationStore";
+  savePdfWithAnnotations,
+  downloadPdf,
+  extractPristineSnapshot,
+  extractAnnotationsJson,
+} from "./pdfSaver";
 
-// ─── Unsaved-changes confirmation dialog ─────────────────────────────────────
+// ─── Unsaved-changes dialog ───────────────────────────────────────────────────
 
-/**
- * Modal dialog shown when the user tries to close or open a new file
- * while there are unsaved annotations.
- *
- * @param {{ onSave: fn, onDiscard: fn, onCancel: fn }} props
- */
 function UnsavedDialog({ onSave, onDiscard, onCancel }) {
   return (
     <div className="dialog-overlay" onClick={onCancel}>
       <div className="dialog-card" onClick={(e) => e.stopPropagation()}>
-        <div className="dialog-icon">
+        <div className="dialog-icon warn">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
             <line x1="12" y1="9" x2="12" y2="13" />
@@ -45,29 +38,55 @@ function UnsavedDialog({ onSave, onDiscard, onCancel }) {
   );
 }
 
+// ─── Reset-changes confirmation dialog ───────────────────────────────────────
+
+function ResetDialog({ onConfirm, onCancel }) {
+  return (
+    <div className="dialog-overlay" onClick={onCancel}>
+      <div className="dialog-card" onClick={(e) => e.stopPropagation()}>
+        <div className="dialog-icon danger">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <polyline points="1 4 1 10 7 10" />
+            <path d="M3.51 15a9 9 0 1 0 .49-3.5" />
+          </svg>
+        </div>
+        <p className="dialog-title">Reset all changes?</p>
+        <p className="dialog-desc">
+          This will permanently remove all annotations and restore the original
+          PDF. This action cannot be undone.
+        </p>
+        <div className="dialog-actions">
+          <button className="dialog-btn reset"  onClick={onConfirm}>Reset changes</button>
+          <button className="dialog-btn cancel" onClick={onCancel}>Cancel</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Main App ─────────────────────────────────────────────────────────────────
 
 function App() {
-  const [pdfData, setPdfData]                       = useState(null);
-  const [fileName, setFileName]                     = useState("");
-  const [filePath, setFilePath]                     = useState("");
-  const [scale, setScale]                           = useState(1.5);
-  const [savedAnnotations, setSavedAnnotations]     = useState(null);
-  const [toastMessage, setToastMessage]             = useState("");
-  const [hasUnsavedChanges, setHasUnsavedChanges]   = useState(false);
+  const [pdfData, setPdfData]                     = useState(null);
+  const [fileName, setFileName]                   = useState("");
+  const [filePath, setFilePath]                   = useState("");
+  const [scale, setScale]                         = useState(1.5);
+  const [savedAnnotations, setSavedAnnotations]   = useState(null);
+  const [toastMessage, setToastMessage]           = useState("");
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [viewerKey, setViewerKey]                 = useState(0);
 
-  // Stores the action to resume after the user responds to the dialog.
-  // null = dialog not shown.
-  // { type: 'close' }              → user clicked Close
-  // { type: 'open', execute: fn }  → user clicked Open (with a callback to
-  //                                   perform the actual file-open after resolving)
-  const [pendingAction, setPendingAction]           = useState(null);
+  // pendingAction drives the "unsaved changes" dialog
+  // { type: 'close' } | { type: 'open', execute: fn } | null
+  const [pendingAction, setPendingAction]   = useState(null);
+  // showResetDialog drives the "reset" confirmation dialog
+  const [showResetDialog, setShowResetDialog] = useState(false);
 
-  const pristinePdfRef = useRef(null);
+  const pristinePdfRef = useRef(null);   // original un-annotated bytes
   const toastTimerRef  = useRef(null);
   const canvasMapRef   = useRef({});
 
-  // ── Helpers ────────────────────────────────────────────────────────────────
+  // ── Helpers ──────────────────────────────────────────────────────────────────
 
   const handleCanvasMapReady = useCallback((map) => {
     canvasMapRef.current = map;
@@ -77,34 +96,29 @@ function App() {
     setHasUnsavedChanges(true);
   }, []);
 
-  const showToast = useCallback((message) => {
-    setToastMessage(message);
+  const showToast = useCallback((message, type = "success") => {
+    setToastMessage({ text: message, type });
     if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
     toastTimerRef.current = setTimeout(() => setToastMessage(""), 3000);
   }, []);
 
-  // ── Core save logic (also called by the dialog) ───────────────────────────
+  // ── Core save logic ───────────────────────────────────────────────────────────
 
   const performSave = useCallback(async () => {
     if (!pdfData || !pristinePdfRef.current) return;
 
     const newPdfBytes = await savePdfWithAnnotations(
-      pristinePdfRef.current,
+      pristinePdfRef.current,   // always burn from pristine
       canvasMapRef.current,
+      pristinePdfRef.current,   // embed pristine as attachment
     );
     await downloadPdf(newPdfBytes, filePath);
-
-    const pageStates = {};
-    Object.entries(canvasMapRef.current).forEach(([pageNum, canvas]) => {
-      if (canvas) pageStates[pageNum] = JSON.stringify(canvas.toJSON());
-    });
-    await saveAnnotations(filePath, pageStates);
 
     setHasUnsavedChanges(false);
     showToast("Changes saved successfully");
   }, [pdfData, filePath, showToast]);
 
-  // ── Core close logic ──────────────────────────────────────────────────────
+  // ── Core close logic ──────────────────────────────────────────────────────────
 
   const performClose = useCallback(() => {
     setPdfData(null);
@@ -116,44 +130,64 @@ function App() {
     canvasMapRef.current   = {};
   }, []);
 
-  // ── Core open-file logic ──────────────────────────────────────────────────
+  // ── Core open-file logic ──────────────────────────────────────────────────────
 
   const performOpen = useCallback(async (selected) => {
     const contents = await readFile(selected, { dir: null });
 
+    // Normalise to Uint8Array
     let safeContents;
-    if (contents instanceof Uint8Array)       safeContents = contents;
-    else if (contents instanceof ArrayBuffer) safeContents = new Uint8Array(contents);
-    else if (ArrayBuffer.isView(contents))    safeContents = new Uint8Array(contents.buffer, contents.byteOffset, contents.byteLength);
-    else if (Array.isArray(contents))         safeContents = new Uint8Array(contents);
-    else if (typeof contents === "object")    safeContents = new Uint8Array(Object.values(contents));
+    if      (contents instanceof Uint8Array)       safeContents = contents;
+    else if (contents instanceof ArrayBuffer)      safeContents = new Uint8Array(contents);
+    else if (ArrayBuffer.isView(contents))         safeContents = new Uint8Array(contents.buffer, contents.byteOffset, contents.byteLength);
+    else if (Array.isArray(contents))              safeContents = new Uint8Array(contents);
+    else if (typeof contents === "object")         safeContents = new Uint8Array(Object.values(contents));
     else safeContents = contents;
 
-    // Pristine bytes
-    let pristine = await loadPristineBytes(selected);
-    if (!pristine) {
-      await savePristineBytes(selected, safeContents);
-      pristine = safeContents;
-    }
+    // ── Extract embedded pristine + annotations (if this file was saved by mypdf) ──
+    const embeddedPristine     = await extractPristineSnapshot(safeContents);
+    const embeddedAnnotations  = embeddedPristine
+      ? await extractAnnotationsJson(safeContents)
+      : null;
+
+    // Pristine = embedded original (if exists) or the file itself (first open)
+    const pristine = embeddedPristine ?? safeContents;
     pristinePdfRef.current = pristine;
 
-    const stored = await loadAnnotations(selected);
-
-    setPdfData(safeContents);
+    // Always render from pristine so the pdfjs layer stays clean;
+    // burned annotations in the file are only for external viewers.
+    setPdfData(pristine);
     setFileName(selected.split("/").pop() || "Unnamed");
     setFilePath(selected);
-    setSavedAnnotations(stored);
+    setSavedAnnotations(embeddedAnnotations);   // restores Fabric canvas
     setHasUnsavedChanges(false);
     canvasMapRef.current = {};
+    setViewerKey((k) => k + 1);                 // force viewer remount
   }, []);
 
-  // ── Dialog resolution handlers ────────────────────────────────────────────
+  // ── Core reset logic ──────────────────────────────────────────────────────────
+
+  const performReset = useCallback(async () => {
+    if (!pristinePdfRef.current || !filePath) return;
+    try {
+      await downloadPdf(pristinePdfRef.current, filePath);
+      setSavedAnnotations(null);
+      setHasUnsavedChanges(false);
+      canvasMapRef.current = {};
+      setViewerKey((k) => k + 1);
+      showToast("All changes reset", "info");
+    } catch (err) {
+      console.error("Reset error:", err);
+      alert("Reset failed: " + err.message);
+    }
+  }, [filePath, showToast]);
+
+  // ── Dialog resolution handlers ────────────────────────────────────────────────
 
   const handleDialogSave = useCallback(async () => {
     setPendingAction(null);
     try {
       await performSave();
-      // After saving, execute the originally-requested action
       if (pendingAction?.type === "close") {
         performClose();
       } else if (pendingAction?.type === "open") {
@@ -169,7 +203,6 @@ function App() {
     const action = pendingAction;
     setPendingAction(null);
     setHasUnsavedChanges(false);
-
     if (action?.type === "close") {
       performClose();
     } else if (action?.type === "open") {
@@ -181,7 +214,16 @@ function App() {
     setPendingAction(null);
   }, []);
 
-  // ── Public handlers wired to UI buttons ──────────────────────────────────
+  const handleResetConfirm = useCallback(async () => {
+    setShowResetDialog(false);
+    await performReset();
+  }, [performReset]);
+
+  const handleResetCancel = useCallback(() => {
+    setShowResetDialog(false);
+  }, []);
+
+  // ── Public UI handlers ────────────────────────────────────────────────────────
 
   const handleOpenPDF = useCallback(async () => {
     try {
@@ -190,11 +232,9 @@ function App() {
       });
       if (!selected || typeof selected !== "string") return;
 
-      // Capture selected in a closure so it can be used by the dialog's execute
       const doOpen = () => performOpen(selected);
 
       if (pdfData && hasUnsavedChanges) {
-        // Show dialog; store the open action as pending
         setPendingAction({ type: "open", execute: doOpen });
       } else {
         await doOpen();
@@ -222,14 +262,19 @@ function App() {
     }
   }, [pdfData, performSave]);
 
+  const handleResetPDF = useCallback(() => {
+    setShowResetDialog(true);
+  }, []);
+
   const zoomIn  = () => setScale((p) => Math.min(p + 0.25, 4));
   const zoomOut = () => setScale((p) => Math.max(p - 0.25, 0.5));
 
-  // ── Render ────────────────────────────────────────────────────────────────
+  // ── Render ────────────────────────────────────────────────────────────────────
 
   return (
     <div className="app-container">
-      {/* ── Unsaved-changes dialog ── */}
+
+      {/* ── Dialogs ── */}
       {pendingAction && (
         <UnsavedDialog
           onSave={handleDialogSave}
@@ -237,14 +282,27 @@ function App() {
           onCancel={handleDialogCancel}
         />
       )}
+      {showResetDialog && (
+        <ResetDialog
+          onConfirm={handleResetConfirm}
+          onCancel={handleResetCancel}
+        />
+      )}
 
-      {/* ── Save toast ── */}
+      {/* ── Toast ── */}
       {toastMessage && (
-        <div className="toast" key={toastMessage}>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-            <polyline points="20 6 9 17 4 12" />
-          </svg>
-          {toastMessage}
+        <div className={`toast toast--${toastMessage.type ?? "success"}`} key={toastMessage.text}>
+          {toastMessage.type === "info" ? (
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+              <polyline points="1 4 1 10 7 10" />
+              <path d="M3.51 15a9 9 0 1 0 .49-3.5" />
+            </svg>
+          ) : (
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+              <polyline points="20 6 9 17 4 12" />
+            </svg>
+          )}
+          {toastMessage.text}
         </div>
       )}
 
@@ -275,7 +333,6 @@ function App() {
 
           {fileName && (
             <>
-              {/* Unsaved-changes dot indicator */}
               <div className="file-chip">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
                   style={{ width: 12, height: 12, flexShrink: 0 }}>
@@ -295,6 +352,18 @@ function App() {
                   <polyline points="7 3 7 8 15 8" />
                 </svg>
                 Save PDF
+              </button>
+
+              <button
+                className="topbar-btn reset-btn"
+                onClick={handleResetPDF}
+                title="Remove all annotations and restore original PDF"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <polyline points="1 4 1 10 7 10" />
+                  <path d="M3.51 15a9 9 0 1 0 .49-3.5" />
+                </svg>
+                Reset changes
               </button>
 
               <button className="topbar-btn secondary" onClick={handleClosePDF}>
@@ -321,6 +390,7 @@ function App() {
       <div className="content">
         {pdfData ? (
           <ContinuousPDFViewer
+            key={viewerKey}
             pdfData={pdfData}
             fileName={fileName}
             scale={scale}
@@ -381,12 +451,11 @@ function App() {
               <div className="feature-card">
                 <div className="feature-card-icon" style={{ background: "rgba(34,197,94,0.15)" }}>
                   <svg viewBox="0 0 24 24" fill="none" stroke="#22c55e" strokeWidth="2">
-                    <path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z" />
-                    <polyline points="17 21 17 13 7 13 7 21" />
-                    <polyline points="7 3 7 8 15 8" />
+                    <polyline points="1 4 1 10 7 10" />
+                    <path d="M3.51 15a9 9 0 1 0 .49-3.5" />
                   </svg>
                 </div>
-                <h3>Save PDF</h3>
+                <h3>Reset &amp; Restore</h3>
               </div>
             </div>
           </div>
