@@ -29,8 +29,6 @@ function AnnotationCanvas({
       isInitializedRef.current = true;
 
       if (onCanvasReady) onCanvasReady(canvas, pageNumber);
-
-      if (onCanvasReady) onCanvasReady(canvas, pageNumber);
     } catch (error) {
       console.error(`Canvas init error (page ${pageNumber}):`, error);
     }

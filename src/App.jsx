@@ -150,8 +150,10 @@ function App() {
       ? await extractAnnotationsJson(safeContents)
       : null;
 
-    // Pristine = embedded original (if exists) or the file itself (first open)
-    const pristine = embeddedPristine ?? safeContents;
+    // Pristine = embedded original (if exists) or the file itself (first open).
+    // slice(0) creates a fully independent copy so that when pdf.js transfers
+    // its ArrayBuffer to the Web Worker the pristine reference is never detached.
+    const pristine = (embeddedPristine ?? safeContents).slice(0);
     pristinePdfRef.current = pristine;
 
     // Always render from pristine so the pdfjs layer stays clean;

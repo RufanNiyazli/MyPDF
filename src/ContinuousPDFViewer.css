@@ -59,6 +59,9 @@
   flex-shrink: 0;
   width: fit-content;
   height: fit-content;
+  /* Skip layout/paint for off-screen pages so scrolling and “jump to page” stay cheaper. */
+  content-visibility: auto;
+  contain-intrinsic-size: 900px 1200px;
 }
 
 .page-number-badge {
